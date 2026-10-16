@@ -18,7 +18,7 @@ if [ ! -f /etc/config/leigod-manager ]; then
 fi
 
 # ---- 依赖自动安装 (雷神插件必要组件 + 本项目组件, 参考 miaoermua/openwrt-leigodacc-manager) ----
-DEPS="libpcap iptables kmod-ipt-nat iptables-mod-tproxy kmod-ipt-tproxy kmod-ipt-ipset ipset kmod-tun curl miniupnpd jsonfilter lua uhttpd tc-full kmod-netem conntrack conntrackd"
+DEPS="libpcap1 iptables kmod-ipt-nat iptables-mod-tproxy kmod-ipt-tproxy kmod-ipt-ipset ipset kmod-tun curl miniupnpd jsonfilter lua uhttpd tc-full kmod-netem conntrack conntrackd"
 MISSING=""
 for p in $DEPS; do
 	opkg list-installed 2>/dev/null | grep -q "^$p " || MISSING="$MISSING $p"
