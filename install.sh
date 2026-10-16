@@ -3,8 +3,8 @@
 # 用法: 把整个仓库传到路由器后, 在仓库目录执行 sh install.sh
 
 # ================= 部署配置(按需修改) =================
-PORT=8081        # 独立页面端口(网关上会被占用的端口请避开)
-AUTH_PASS=""     # 独立页面访问密钥; 留空则安装后手动编辑 /www-leigod/cgi-bin/leigod 中的 AUTH_PASS
+PORT=8081        # 独立页面初始端口(安装后可在 LuCI「无人值守」页修改, 被占用会提示端口冲突)
+AUTH_PASS=""     # 独立页面初始访问密钥; 也可安装后在 LuCI「无人值守」页的"独立页面访问密钥"设置
 # =====================================================
 
 REPO_DIR=$(dirname "$0")
@@ -21,13 +21,20 @@ fi
 # 复制 LuCI 相关文件
 cp -f usr/bin/leigod-guard.sh /usr/bin/leigod-guard.sh
 cp -f etc/init.d/leigod-guard /etc/init.d/leigod-guard
-cp -f etc/config/leigod-guard /etc/config/leigod-guard
+# uci 配置: 已有配置(含 token/设备/密钥)时不覆盖, 避免重复安装清空用户数据
+if [ ! -f /etc/config/leigod-guard ]; then
+	cp -f etc/config/leigod-guard /etc/config/leigod-guard
+	echo "已创建默认配置 /etc/config/leigod-guard"
+else
+	echo "检测到已有 /etc/config/leigod-guard, 保留现有配置(token/设备/密钥等)"
+fi
 cp -f usr/lib/lua/luci/controller/leigod.lua /usr/lib/lua/luci/controller/leigod.lua
 cp -f usr/lib/lua/luci/model/cbi/leigod-guard.lua /usr/lib/lua/luci/model/cbi/leigod-guard.lua
 cp -f usr/lib/lua/luci/model/cbi/leigod-settings.lua /usr/lib/lua/luci/model/cbi/leigod-settings.lua
 mkdir -p /usr/lib/lua/luci/view/leigod
 cp -f usr/lib/lua/luci/view/leigod/overview.htm /usr/lib/lua/luci/view/leigod/overview.htm
 cp -f usr/lib/lua/luci/view/leigod/logs.htm /usr/lib/lua/luci/view/leigod/logs.htm
+cp -f usr/lib/lua/luci/view/leigod/login-widget.htm /usr/lib/lua/luci/view/leigod/login-widget.htm
 
 chmod 755 /usr/bin/leigod-guard.sh /etc/init.d/leigod-guard
 chmod 600 /etc/config/leigod-guard
@@ -35,17 +42,20 @@ chmod 644 /usr/lib/lua/luci/controller/leigod.lua \
 	/usr/lib/lua/luci/model/cbi/leigod-guard.lua \
 	/usr/lib/lua/luci/model/cbi/leigod-settings.lua \
 	/usr/lib/lua/luci/view/leigod/overview.htm \
-	/usr/lib/lua/luci/view/leigod/logs.htm
+	/usr/lib/lua/luci/view/leigod/logs.htm \
+	/usr/lib/lua/luci/view/leigod/login-widget.htm
 
-# 独立端口页面 (uhttpd 第二实例, 默认 8081, 无需登录 LuCI)
+# 独立端口页面 (uhttpd 第二实例, 无需登录 LuCI)
 mkdir -p /www-leigod/cgi-bin
 cp -f www-leigod/cgi-bin/leigod /www-leigod/cgi-bin/leigod
 chmod 755 /www-leigod/cgi-bin/leigod
-# 写入访问密钥(脚本顶部 AUTH_PASS 变量, 非空时自动注入)
+# 端口/密钥统一写入 uci: CGI 与守护运行时都从这里读取, 后续直接在 LuCI「无人值守」页修改即可生效
+uci -q set leigod-guard.config.standalone_port="$PORT"
 if [ -n "$AUTH_PASS" ]; then
-	sed -i "s|^local AUTH_PASS = \"\"$|local AUTH_PASS = \"$AUTH_PASS\"|" /www-leigod/cgi-bin/leigod
-	echo "访问密钥已写入"
+	uci set leigod-guard.config.standalone_key="$AUTH_PASS"
+	echo "访问密钥已写入配置"
 fi
+uci commit leigod-guard
 echo '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/cgi-bin/leigod"></head><body></body></html>' > /www-leigod/index.html
 
 uci -q del uhttpd.leigod
@@ -70,12 +80,12 @@ rm -rf /tmp/luci-modulecache /tmp/luci-indexcache /tmp/luci-templatecache 2>/dev
 /etc/init.d/uhttpd restart
 
 echo "== 安装完成 =="
-echo "LuCI 入口: LuCI -> 服务 -> 雷神加速器 -> 无人值守 (配置 account_token 和游戏设备IP)"
+echo "LuCI 入口: LuCI -> 服务 -> 雷神加速器 -> 无人值守"
+echo "  - account_token: 可用页面上的\"快捷登录\"按钮自动获取(推荐手机验证码登录)"
+echo "  - 独立页面端口/访问密钥: 在\"独立状态页设置\"中修改, 保存即生效"
 echo "独立页面:  http://<网关IP>:$PORT  (仅限内网使用, 勿暴露公网)"
 if [ -z "$AUTH_PASS" ]; then
 	echo ""
-	echo "【部署必做】设置独立页面访问密钥(二选一):"
-	echo "  1. 编辑 install.sh 顶部 AUTH_PASS 变量后重新执行本脚本"
-	echo "  2. 直接编辑 /www-leigod/cgi-bin/leigod, 找到 AUTH_PASS = \"\" 在引号内填入密钥"
-	echo "  未设置密钥前, 独立页面将拒绝所有访问"
+	echo "【部署必做】设置独立页面访问密钥: 到 LuCI「雷神加速器 -> 无人值守 -> 独立状态页设置\","
+	echo "  填写\"独立页面访问密钥\"并保存。未设置密钥前, 独立页面将拒绝所有访问"
 fi

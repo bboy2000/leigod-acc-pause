@@ -22,9 +22,9 @@ local function uci_get(k)
 end
 
 -- ===== 访问认证: 只需一个访问密钥(无需用户名) =====
--- 【部署必填】在下面 AUTH_PASS 引号内填入你的访问密钥, 留空则页面拒绝所有访问
--- 例: local AUTH_PASS = "your-secret-key"
-local AUTH_PASS = ""
+-- 密钥从 LuCI「雷神加速器 → 无人值守」页面的"独立页面访问密钥"读取
+-- (uci: leigod-guard.config.standalone_key), 留空则页面拒绝所有访问
+local AUTH_PASS = uci_get("standalone_key")
 local COOKIE_NAME = "lg_key"
 
 local B64CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -104,9 +104,14 @@ local function serve_login(fail_msg)
 	io.write("Content-Type: text/html; charset=utf-8\r\n\r\n")
 	local msg = ""
 	if AUTH_PASS == "" then
-		msg = '<div class="lmsg warn">页面未配置访问密钥：请编辑 /www-leigod/cgi-bin/leigod 中的 AUTH_PASS 后再访问</div>'
+		msg = '<div class="lmsg warn">页面未配置访问密钥：请到 LuCI「雷神加速器 → 无人值守」页面设置"独立页面访问密钥"并保存</div>'
 	elseif fail_msg then
 		msg = '<div class="lmsg warn">' .. esc(fail_msg) .. "</div>"
+	end
+	local cf = io.open("/tmp/leigod-guard/port_conflict", "r")
+	if cf then
+		cf:close()
+		msg = msg .. '<div class="lmsg warn"><b>端口冲突请重设</b>：当前配置的独立页面端口已被其他服务占用，独立页面无法切换，请到 LuCI「无人值守」页面更换端口后保存</div>'
 	end
 	io.write([==[<!DOCTYPE html>
 <html lang="zh-CN">
@@ -148,7 +153,7 @@ body{background:var(--lg-bg);color:var(--lg-text);font-family:system-ui,"Segoe U
 	<div class="sub">请输入访问密钥（无需用户名）</div>
 	]==] .. msg .. [==[
 	<form method="post"><input type="password" name="key" placeholder="访问密钥" autofocus required><button type="submit">进入</button></form>
-	<div class="hint">密钥由部署者在网关 /www-leigod/cgi-bin/leigod 中设置</div>
+	<div class="hint">端口与密钥均在 LuCI「雷神加速器 → 无人值守」页面设置</div>
 </div>
 </body>
 </html>]==])

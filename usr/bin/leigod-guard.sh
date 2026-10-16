@@ -58,6 +58,30 @@ while :; do
 	iptables -t mangle -L LEIGUARD >/dev/null 2>&1 || iptables -t mangle -N LEIGUARD
 	iptables -t mangle -C PREROUTING -j LEIGUARD 2>/dev/null || iptables -t mangle -A PREROUTING -j LEIGUARD
 
+	# 独立页面端口应用与冲突检测(端口/密钥在LuCI无人值守页配置)
+	SPORT=$(cfg standalone_port)
+	if [ -n "$SPORT" ]; then
+		CURPORT=$(uci -q get uhttpd.leigod.listen_http 2>/dev/null | sed 's/.*://')
+		if [ "$SPORT" != "$CURPORT" ]; then
+			if netstat -tln 2>/dev/null | awk '{print $4}' | grep -q ":$SPORT\$"; then
+				[ "$(cat "$STDIR/port_conflict" 2>/dev/null)" != "$SPORT" ] && log "端口 $SPORT 已被占用(冲突), 独立页面未切换, 请重设端口"
+				echo "$SPORT" > "$STDIR/port_conflict"
+			else
+				uci -q set uhttpd.leigod=uhttpd
+				uci -q set uhttpd.leigod.listen_http="0.0.0.0:$SPORT"
+				uci -q set uhttpd.leigod.home="/www-leigod"
+				uci -q set uhttpd.leigod.cgi_prefix="/cgi-bin"
+				uci -q set uhttpd.leigod.network_timeout="30"
+				uci commit uhttpd
+				/etc/init.d/uhttpd restart 2>/dev/null
+				rm -f "$STDIR/port_conflict"
+				log "独立页面端口已切换为 $SPORT"
+			fi
+		else
+			rm -f "$STDIR/port_conflict"
+		fi
+	fi
+
 	ensure_rule() {
 		iptables -t mangle -C LEIGUARD -s "$1" -j RETURN 2>/dev/null || iptables -t mangle -A LEIGUARD -s "$1" -j RETURN
 	}

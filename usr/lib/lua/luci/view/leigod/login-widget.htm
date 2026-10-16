@@ -1,0 +1,203 @@
+<%-
+	local u_sms = luci.dispatcher.build_url("admin/services/leigod/lg_sms_send")
+	local u_login = luci.dispatcher.build_url("admin/services/leigod/lg_login")
+-%>
+<button type="button" class="lgq-btn" id="lgq-open" onclick="return false;">🔑 快捷登录雷神（自动获取 account_token）</button>
+<div class="lgq-hint">支持手机验证码 / 密码两种方式，登录成功后 token 自动写入配置并重启守护，无需手动保存</div>
+
+<div id="lgq-mask" style="display:none;">
+	<div id="lgq-dialog">
+		<div class="lgq-head">
+			<span>登录雷神加速器</span>
+			<button type="button" class="lgq-x" id="lgq-close">×</button>
+		</div>
+		<div class="lgq-tabs">
+			<button type="button" class="lgq-tab on" data-tab="sms">手机验证码登录</button>
+			<button type="button" class="lgq-tab" data-tab="pwd">密码登录</button>
+		</div>
+		<div class="lgq-body">
+			<div class="lgq-msg" id="lgq-msg" style="display:none;"></div>
+
+			<div id="lgq-sms">
+				<label>手机号</label>
+				<div class="lgq-row">
+					<input type="text" id="lgq-phone" maxlength="11" placeholder="11位手机号" autocomplete="tel">
+					<button type="button" class="lgq-send" id="lgq-send">发送验证码</button>
+				</div>
+				<label>短信验证码</label>
+				<input type="text" id="lgq-code" maxlength="6" placeholder="6位短信验证码" autocomplete="one-time-code">
+				<button type="button" class="lgq-submit" id="lgq-sms-go">登 录</button>
+			</div>
+
+			<div id="lgq-pwd" style="display:none;">
+				<div class="lgq-note">⚠ 密码登录受雷神官方风控（极验滑块）影响，可能无法使用；推荐使用手机验证码登录</div>
+				<label>账号（手机号/邮箱）</label>
+				<input type="text" id="lgq-account" placeholder="雷神账号" autocomplete="username">
+				<label>密码</label>
+				<input type="password" id="lgq-password" placeholder="雷神密码" autocomplete="current-password">
+				<button type="button" class="lgq-submit" id="lgq-pwd-go">登 录</button>
+			</div>
+		</div>
+	</div>
+</div>
+
+<style type="text/css">
+.lgq-btn{
+	display:inline-block;border:none;border-radius:8px;padding:9px 22px;margin-top:8px;
+	font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;
+	background:#2e7d32;color:#fff;
+}
+.lgq-btn:hover{background:#256628;}
+.lgq-hint{font-size:12px;color:#616e7c;margin-top:6px;line-height:1.6;}
+#lgq-mask{
+	position:fixed;inset:0;background:rgba(16,24,40,.55);z-index:9000;
+	display:flex;align-items:center;justify-content:center;padding:16px;
+}
+#lgq-dialog{
+	background:#fff;border-radius:12px;box-shadow:0 10px 40px rgba(16,24,40,.25);
+	width:100%;max-width:380px;overflow:hidden;font-family:inherit;
+}
+.lgq-head{
+	display:flex;justify-content:space-between;align-items:center;
+	padding:14px 18px;border-bottom:1px solid #e4e7eb;
+	font-size:15px;font-weight:700;color:#1f2933;
+}
+.lgq-x{border:none;background:none;font-size:22px;line-height:1;cursor:pointer;color:#616e7c;}
+.lgq-tabs{display:flex;border-bottom:1px solid #e4e7eb;}
+.lgq-tab{
+	flex:1;border:none;background:none;padding:11px 0;font-size:13px;cursor:pointer;
+	color:#616e7c;font-family:inherit;border-bottom:2px solid transparent;
+}
+.lgq-tab.on{color:#2e7d32;border-bottom-color:#2e7d32;font-weight:700;}
+.lgq-body{padding:18px;}
+.lgq-body label{display:block;font-size:12px;color:#616e7c;margin:10px 0 6px;}
+.lgq-body input{
+	width:100%;padding:10px 12px;border:1px solid #e4e7eb;border-radius:8px;
+	font-size:14px;outline:none;box-sizing:border-box;font-family:inherit;
+}
+.lgq-body input:focus{border-color:#2e7d32;}
+.lgq-row{display:flex;gap:8px;}
+.lgq-row input{flex:1;}
+.lgq-send{
+	flex-shrink:0;border:none;border-radius:8px;padding:0 14px;font-size:13px;
+	cursor:pointer;font-family:inherit;background:#e8f3e9;color:#2e7d32;font-weight:700;
+	white-space:nowrap;
+}
+.lgq-send:disabled{opacity:.55;cursor:not-allowed;}
+.lgq-submit{
+	width:100%;margin-top:16px;border:none;border-radius:8px;padding:11px 0;
+	font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;
+	background:#2e7d32;color:#fff;
+}
+.lgq-submit:disabled{opacity:.55;cursor:not-allowed;}
+.lgq-msg{font-size:12px;border-radius:8px;padding:8px 12px;margin-bottom:4px;line-height:1.6;}
+.lgq-msg.ok{background:#e8f3e9;color:#2e7d32;}
+.lgq-msg.err{background:#fdecea;color:#c62828;}
+.lgq-note{
+	font-size:12px;color:#8a6d1a;background:#fdf6e3;border-radius:8px;
+	padding:8px 12px;margin-bottom:6px;line-height:1.6;
+}
+</style>
+
+<script type="text/javascript">
+(function(){
+	var $ = function(id){ return document.getElementById(id); };
+	var U_SMS = '<%=u_sms%>', U_LOGIN = '<%=u_login%>';
+	var smskey = "", timer = null;
+
+	function post(url, data, cb){
+		var body = new URLSearchParams();
+		for(var k in data){ body.append(k, data[k]); }
+		fetch(url, {
+			method: "POST",
+			credentials: "same-origin",
+			headers: {"Content-Type": "application/x-www-form-urlencoded"},
+			body: body.toString()
+		}).then(function(r){ return r.json(); }).then(cb).catch(function(){
+			show("网络错误，请重试", false);
+		});
+	}
+
+	function show(msg, ok){
+		var m = $("lgq-msg");
+		m.style.display = "block";
+		m.className = "lgq-msg " + (ok ? "ok" : "err");
+		m.textContent = msg;
+	}
+
+	function openDlg(){ $("lgq-mask").style.display = "flex"; }
+	function closeDlg(){ $("lgq-mask").style.display = "none"; }
+
+	$("lgq-open").addEventListener("click", function(e){ e.preventDefault(); openDlg(); });
+	$("lgq-close").addEventListener("click", closeDlg);
+	$("lgq-mask").addEventListener("click", function(e){ if(e.target === this){ closeDlg(); } });
+
+	document.querySelectorAll(".lgq-tab").forEach(function(t){
+		t.addEventListener("click", function(){
+			document.querySelectorAll(".lgq-tab").forEach(function(x){ x.classList.remove("on"); });
+			t.classList.add("on");
+			var sms = t.getAttribute("data-tab") === "sms";
+			$("lgq-sms").style.display = sms ? "" : "none";
+			$("lgq-pwd").style.display = sms ? "none" : "";
+		});
+	});
+
+	$("lgq-send").addEventListener("click", function(){
+		var phone = $("lgq-phone").value.replace(/\s/g, "");
+		if(!/^1\d{10}$/.test(phone)){ show("请输入正确的11位手机号", false); return; }
+		var btn = this;
+		btn.disabled = true;
+		post(U_SMS, {phone: phone}, function(r){
+			if(r.code === 0){
+				smskey = r.smscode_key || "";
+				show(r.msg || "验证码已发送", true);
+				var n = 60;
+				btn.textContent = n + "s 后重发";
+				timer = setInterval(function(){
+					n--;
+					if(n <= 0){ clearInterval(timer); btn.disabled = false; btn.textContent = "发送验证码"; }
+					else{ btn.textContent = n + "s 后重发"; }
+				}, 1000);
+			}else{
+				btn.disabled = false;
+				show(r.msg || "发送失败", false);
+			}
+		});
+	});
+
+	$("lgq-sms-go").addEventListener("click", function(){
+		var phone = $("lgq-phone").value.replace(/\s/g, "");
+		var code = $("lgq-code").value.replace(/\s/g, "");
+		if(smskey === ""){ show("请先获取短信验证码", false); return; }
+		if(code === ""){ show("请输入短信验证码", false); return; }
+		var btn = this;
+		btn.disabled = true; btn.textContent = "登录中…";
+		post(U_LOGIN, {mode: "sms", phone: phone, smscode_key: smskey, smscode: code}, function(r){
+			btn.disabled = false; btn.textContent = "登 录";
+			if(r.code === 0){
+				show(r.msg, true);
+				setTimeout(function(){ location.reload(); }, 800);
+			}else{
+				show(r.msg || "登录失败", false);
+			}
+		});
+	});
+
+	$("lgq-pwd-go").addEventListener("click", function(){
+		var acct = $("lgq-account").value.replace(/\s/g, "");
+		var pwd = $("lgq-password").value;
+		if(acct === "" || pwd === ""){ show("请填写账号和密码", false); return; }
+		var btn = this;
+		btn.disabled = true; btn.textContent = "登录中…";
+		post(U_LOGIN, {mode: "pwd", account: acct, password: pwd}, function(r){
+			btn.disabled = false; btn.textContent = "登 录";
+			if(r.code === 0){
+				show(r.msg, true);
+				setTimeout(function(){ location.reload(); }, 800);
+			}else{
+				show(r.msg || "登录失败", false);
+			}
+		});
+	});
+})();
+</script>
