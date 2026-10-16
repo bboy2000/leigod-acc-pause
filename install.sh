@@ -62,3 +62,7 @@ rm -rf /tmp/luci-modulecache /tmp/luci-indexcache /tmp/luci-templatecache 2>/dev
 echo "== 安装完成 =="
 echo "LuCI 入口: LuCI -> 服务 -> 雷神加速器 -> 无人值守 (配置 account_token 和游戏设备IP)"
 echo "独立页面:  http://<网关IP>:8081  (仅限内网使用, 勿暴露公网)"
+echo ""
+echo "【部署必做】设置独立页面访问密钥:"
+echo "  编辑 /www-leigod/cgi-bin/leigod, 找到 AUTH_PASS = \"\" , 在引号内填入你的密钥"
+echo "  未设置密钥前, 8081 页面将拒绝所有访问"

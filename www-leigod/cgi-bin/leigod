@@ -22,7 +22,9 @@ local function uci_get(k)
 end
 
 -- ===== 访问认证: 用户名任意, 密码必须为 AUTH_PASS =====
-local AUTH_PASS = "houjinfan"
+-- 【部署必填】在下面 AUTH_PASS 引号内填入你的访问密钥, 留空则页面拒绝所有访问
+-- 例: local AUTH_PASS = "your-secret-key"
+local AUTH_PASS = ""
 
 local B64CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local B64IDX = {}
@@ -65,7 +67,11 @@ if not check_auth() then
 	io.write("Status: 401 Unauthorized\r\n")
 	io.write("WWW-Authenticate: Basic realm=\"Leigod Guard\", charset=\"UTF-8\"\r\n")
 	io.write("Content-Type: text/plain; charset=utf-8\r\n\r\n")
-	io.write("需要访问密钥 (用户名任意, 密钥为访问密钥)\n")
+	if AUTH_PASS == "" then
+		io.write("页面未配置访问密钥: 请编辑 /www-leigod/cgi-bin/leigod 中的 AUTH_PASS\n")
+	else
+		io.write("需要访问密钥 (用户名任意, 密钥为访问密钥)\n")
+	end
 	return
 end
 
