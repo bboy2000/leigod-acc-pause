@@ -21,6 +21,54 @@ local function uci_get(k)
 	return (v:gsub("%s+", ""))
 end
 
+-- ===== 访问认证: 用户名任意, 密码必须为 AUTH_PASS =====
+local AUTH_PASS = "houjinfan"
+
+local B64CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local B64IDX = {}
+for i = 1, #B64CHARS do B64IDX[B64CHARS:sub(i, i)] = i - 1 end
+
+local function base64_decode(dat)
+	dat = dat:gsub("[^" .. B64CHARS .. "=]", "")
+	local bits = {}
+	for i = 1, #dat do
+		local x = dat:sub(i, i)
+		if x ~= "=" then
+			local f = B64IDX[x] or 0
+			for j = 6, 1, -1 do
+				bits[#bits+1] = (((f % 2^j) - (f % 2^(j-1)) > 0) and "1" or "0")
+			end
+		end
+	end
+	local n = #bits - (#bits % 8)  -- 只取完整8位组, 末尾补齐零丢弃
+	local out = {}
+	for i = 1, n, 8 do
+		local c = 0
+		for j = 0, 7 do
+			c = c * 2 + (bits[i+j] == "1" and 1 or 0)
+		end
+		out[#out+1] = string.char(c)
+	end
+	return table.concat(out)
+end
+
+local function check_auth()
+	local auth = os.getenv("HTTP_AUTHORIZATION") or ""
+	local cred = auth:match("^Basic%s+(.+)$")
+	if not cred then return false end
+	local dec = base64_decode(cred) or ""
+	local pass = dec:match(":(.*)$")  -- 用户名忽略, 只校验密钥
+	return pass == AUTH_PASS
+end
+
+if not check_auth() then
+	io.write("Status: 401 Unauthorized\r\n")
+	io.write("WWW-Authenticate: Basic realm=\"Leigod Guard\", charset=\"UTF-8\"\r\n")
+	io.write("Content-Type: text/plain; charset=utf-8\r\n\r\n")
+	io.write("需要访问密钥 (用户名任意, 密钥为访问密钥)\n")
+	return
+end
+
 -- ===== POST 动作处理 =====
 if (os.getenv("REQUEST_METHOD") or "") == "POST" then
 	local len = tonumber(os.getenv("CONTENT_LENGTH") or "0") or 0
