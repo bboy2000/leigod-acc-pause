@@ -29,7 +29,7 @@ cd /tmp
 sh -c "$(curl -fsSL https://fastly.jsdelivr.net/gh/bboy2000/leigod-acc-pause@main/install.sh)"
 ```
 
-脚本自动完成：前置检查（curl、雷神官方插件）→ 从 jsDelivr CDN 下载程序文件 → 复制文件与权限 → 注册 LuCI 页面与独立页面（8081）→ 清 LuCI 缓存 → 服务开机自启。
+脚本自动完成：依赖检查与自动安装（opkg/apk 自适应）→ 官方插件未装时自动安装 acc 加速核心（官方源）→ 从 jsDelivr CDN 下载程序文件 → 复制文件与权限 → 注册 LuCI 页面与独立页面（8081）→ 清 LuCI 缓存 → 服务开机自启。**全新网关一条命令即可，无需任何手动准备。**
 
 > 提示：jsDelivr 对 `@main` 分支有缓存（最长约 12 小时）。刚更新完想立即安装最新版，可把命令里的 `@main` 换成 `@<提交号>`（仓库主页每个提交的短 hash）。
 
@@ -129,9 +129,9 @@ rm -rf /tmp/leigod-guard /tmp/luci-modulecache /tmp/luci-indexcache
 
 ## 前提条件
 
-- 已安装 [luci-app-leigod-manager](https://github.com/Arlen-Du/luci-app-leigod-manager/releases)（雷神官方网关插件）
+- **雷神官方插件无需提前安装**：脚本检测到未安装时会自动调用雷神官方安装器（`http://119.3.40.126/router_plugin/plugin_install.sh`）下载 acc 加速核心并完成安装；已装 [luci-app-leigod-manager](https://github.com/Arlen-Du/luci-app-leigod-manager/releases) 包或官方安装器版的网关会直接跳过
 - OpenWrt 为 **Lua 版 LuCI**（QWRT/iStoreOS 等国产固件基本是；官方 21.02+ 原版是 JS 版不适用）
-- 依赖包（libpcap、iptables/tproxy/ipset 系列、kmod-tun、curl、miniupnpd、jsonfilter、lua、uhttpd、tc、conntrack 等）由安装脚本**自动检测并安装**，无需手动准备；固件源不含的非必要组件缺失会被跳过并提示
+- 依赖包（libpcap、iptables/tproxy/ipset 系列、kmod-tun、curl、miniupnpd、jsonfilter、lua、uhttpd、tc、conntrack 等）由安装脚本**自动检测并安装**，无需手动准备；自动兼容 opkg（传统 QWRT）与 apk（iStoreOS 24.10+/25.x 新固件）两种包管理器，固件源不含的非必要组件缺失会被跳过并提示
 
 ## 常见问题
 
