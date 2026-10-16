@@ -21,10 +21,11 @@ local function uci_get(k)
 	return (v:gsub("%s+", ""))
 end
 
--- ===== 访问认证: 用户名任意, 密码必须为 AUTH_PASS =====
+-- ===== 访问认证: 只需一个访问密钥(无需用户名) =====
 -- 【部署必填】在下面 AUTH_PASS 引号内填入你的访问密钥, 留空则页面拒绝所有访问
 -- 例: local AUTH_PASS = "your-secret-key"
 local AUTH_PASS = ""
+local COOKIE_NAME = "lg_key"
 
 local B64CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local B64IDX = {}
@@ -54,45 +55,144 @@ local function base64_decode(dat)
 	return table.concat(out)
 end
 
-local function check_auth()
-	local auth = os.getenv("HTTP_AUTHORIZATION") or ""
-	local cred = auth:match("^Basic%s+(.+)$")
+local function base64_encode(data)
+	local out = {}
+	for i = 1, #data, 3 do
+		local a, b, c = data:byte(i, i + 2)
+		local n = a * 65536 + (b or 0) * 256 + (c or 0)
+		for j = 3, 0, -1 do
+			local v = math.floor(n / 64^j) % 64 + 1
+			out[#out+1] = B64CHARS:sub(v, v)
+		end
+	end
+	local res = table.concat(out)
+	local rem = #data % 3
+	if rem == 1 then res = res:sub(1, -3) .. "=="
+	elseif rem == 2 then res = res:sub(1, -2) .. "=" end
+	return res
+end
+
+local function make_token()
+	return base64_encode("leigod:" .. AUTH_PASS)
+end
+
+local function get_cookie(n)
+	local ck = os.getenv("HTTP_COOKIE") or ""
+	return ck:match(n .. "=([^;]+)")
+end
+
+-- curl 等命令行兼容: Basic 认证, 用户名忽略只校验密钥
+local function basic_ok()
+	local cred = (os.getenv("HTTP_AUTHORIZATION") or ""):match("^Basic%s+(.+)$")
 	if not cred then return false end
-	local dec = base64_decode(cred) or ""
-	local pass = dec:match(":(.*)$")  -- 用户名忽略, 只校验密钥
-	return pass == AUTH_PASS
+	local pass = (base64_decode(cred) or ""):match(":(.*)$")
+	return AUTH_PASS ~= "" and pass == AUTH_PASS
+end
+
+local function check_auth()
+	if AUTH_PASS == "" then return false end
+	if basic_ok() then return true end
+	return get_cookie(COOKIE_NAME) == make_token()
+end
+
+local function urldecode(s)
+	return (s:gsub("+", " "):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
+end
+
+local function serve_login(fail_msg)
+	io.write("Status: 401 Unauthorized\r\n")
+	io.write("Content-Type: text/html; charset=utf-8\r\n\r\n")
+	local msg = ""
+	if AUTH_PASS == "" then
+		msg = '<div class="lmsg warn">页面未配置访问密钥：请编辑 /www-leigod/cgi-bin/leigod 中的 AUTH_PASS 后再访问</div>'
+	elseif fail_msg then
+		msg = '<div class="lmsg warn">' .. esc(fail_msg) .. "</div>"
+	end
+	io.write([==[<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>雷神加速器 · 访问验证</title>
+<style>
+:root{
+  --lg-primary:#2e7d32; --lg-primary-soft:#e8f3e9;
+  --lg-danger:#c62828;  --lg-text:#1f2933; --lg-text-2:#616e7c;
+  --lg-border:#e4e7eb;  --lg-bg:#f0f2f5; --lg-card:#ffffff;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --lg-bg:#121826; --lg-card:#1a2233; --lg-border:#2a3548;
+    --lg-text:#e6ebf2; --lg-text-2:#9aa8bb; --lg-primary:#66bb6a;
+    --lg-primary-soft:#1f3a24; --lg-danger:#ef7b7b; }
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--lg-bg);color:var(--lg-text);font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;}
+.login{background:var(--lg-card);border:1px solid var(--lg-border);border-radius:12px;
+  box-shadow:0 1px 3px rgba(16,24,40,.10);padding:32px 28px;width:100%;max-width:360px;text-align:center;}
+.login h1{font-size:17px;margin-bottom:6px;}
+.login .sub{font-size:12px;color:var(--lg-text-2);margin-bottom:22px;}
+.login input{width:100%;padding:11px 14px;border:1px solid var(--lg-border);border-radius:8px;
+  font-size:14px;margin-bottom:14px;background:var(--lg-card);color:var(--lg-text);outline:none;}
+.login input:focus{border-color:var(--lg-primary);}
+.login button{width:100%;padding:11px 0;border:none;border-radius:8px;font-size:14px;
+  font-weight:700;cursor:pointer;font-family:inherit;background:var(--lg-primary);color:#fff;}
+.lmsg{font-size:12px;border-radius:8px;padding:8px 12px;margin-bottom:14px;line-height:1.6;}
+.warn{background:var(--lg-danger-soft,#fdecea);color:var(--lg-danger,#c62828);}
+.hint{font-size:11px;color:var(--lg-text-2);margin-top:14px;}
+</style>
+</head>
+<body>
+<div class="login">
+	<h1>雷神加速器 · 运行状态</h1>
+	<div class="sub">请输入访问密钥（无需用户名）</div>
+	]==] .. msg .. [==[
+	<form method="post"><input type="password" name="key" placeholder="访问密钥" autofocus required><button type="submit">进入</button></form>
+	<div class="hint">密钥由部署者在网关 /www-leigod/cgi-bin/leigod 中设置</div>
+</div>
+</body>
+</html>]==])
+	return
+end
+
+-- ===== 请求入口: 认证/登录 =====
+local method = os.getenv("REQUEST_METHOD") or ""
+local post_body = ""
+if method == "POST" then
+	local len = tonumber(os.getenv("CONTENT_LENGTH") or "0") or 0
+	if len > 0 and len < 1024 then post_body = io.read(len) or "" end
 end
 
 if not check_auth() then
-	io.write("Status: 401 Unauthorized\r\n")
-	io.write("WWW-Authenticate: Basic realm=\"Leigod Guard\", charset=\"UTF-8\"\r\n")
-	io.write("Content-Type: text/plain; charset=utf-8\r\n\r\n")
-	if AUTH_PASS == "" then
-		io.write("页面未配置访问密钥: 请编辑 /www-leigod/cgi-bin/leigod 中的 AUTH_PASS\n")
+	if method == "POST" and post_body:match("^key=") then
+		-- 登录表单提交
+		local key = urldecode(post_body:match("^key=([^&]*)") or "")
+		if AUTH_PASS ~= "" and key == AUTH_PASS then
+			io.write("Status: 303 See Other\r\nLocation: /cgi-bin/leigod\r\n")
+			io.write("Set-Cookie: " .. COOKIE_NAME .. "=" .. make_token() .. "; Path=/; HttpOnly; SameSite=Lax\r\n\r\n")
+			return
+		end
+		serve_login(AUTH_PASS == "" and nil or "密钥错误，请重试")
 	else
-		io.write("需要访问密钥 (用户名任意, 密钥为访问密钥)\n")
+		serve_login(nil)
 	end
 	return
 end
 
--- ===== POST 动作处理 =====
-if (os.getenv("REQUEST_METHOD") or "") == "POST" then
-	local len = tonumber(os.getenv("CONTENT_LENGTH") or "0") or 0
-	if len > 0 and len < 1024 then
-		local body = io.read(len) or ""
-		local act = body:match("act=([a-z]+)")
-		if act == "start" or act == "stop" or act == "restart" then
-			os.execute("ubus call leigod " .. act .. " >/dev/null 2>&1 &")
-		elseif act == "billpause" or act == "billresume" then
-			local token = uci_get("token")
-			if token ~= "" then
-				local api = (act == "billresume") and "/api/user/recover" or "/api/user/pause"
-				os.execute("curl -s -m 8 -A 'Mozilla/5.0' -H 'Origin: https://www.leigod.com' -H 'Referer: https://www.leigod.com/' -H 'Content-Type: application/json' --data '{\"account_token\":\"" .. token .. "\"}' 'https://webapi.leigod.com" .. api .. "?os_type=4&region_code=1&src_channel=guanwang&lang=zh_CN' >/dev/null 2>&1 &")
-			end
-			-- 恢复计费时通知守护重置空闲计时
-			if act == "billresume" then
-				os.execute("touch /tmp/leigod-guard/reset_timer")
-			end
+-- ===== 已认证: POST 动作处理 =====
+if method == "POST" then
+	local act = post_body:match("act=([a-z]+)")
+	if act == "start" or act == "stop" or act == "restart" then
+		os.execute("ubus call leigod " .. act .. " >/dev/null 2>&1 &")
+	elseif act == "billpause" or act == "billresume" then
+		local token = uci_get("token")
+		if token ~= "" then
+			local api = (act == "billresume") and "/api/user/recover" or "/api/user/pause"
+			os.execute("curl -s -m 8 -A 'Mozilla/5.0' -H 'Origin: https://www.leigod.com' -H 'Referer: https://www.leigod.com/' -H 'Content-Type: application/json' --data '{\"account_token\":\"" .. token .. "\"}' 'https://webapi.leigod.com" .. api .. "?os_type=4&region_code=1&src_channel=guanwang&lang=zh_CN' >/dev/null 2>&1 &")
+		end
+		-- 恢复计费时通知守护重置空闲计时
+		if act == "billresume" then
+			os.execute("touch /tmp/leigod-guard/reset_timer")
 		end
 	end
 	io.write("Status: 303 See Other\r\nLocation: /cgi-bin/leigod\r\n\r\n")

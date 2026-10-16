@@ -2,6 +2,11 @@
 # leigod-acc-pause 一键安装脚本 (OpenWrt, Lua 版 LuCI)
 # 用法: 把整个仓库传到路由器后, 在仓库目录执行 sh install.sh
 
+# ================= 部署配置(按需修改) =================
+PORT=8081        # 独立页面端口(网关上会被占用的端口请避开)
+AUTH_PASS=""     # 独立页面访问密钥; 留空则安装后手动编辑 /www-leigod/cgi-bin/leigod 中的 AUTH_PASS
+# =====================================================
+
 REPO_DIR=$(dirname "$0")
 cd "$REPO_DIR" || exit 1
 
@@ -32,15 +37,20 @@ chmod 644 /usr/lib/lua/luci/controller/leigod.lua \
 	/usr/lib/lua/luci/view/leigod/overview.htm \
 	/usr/lib/lua/luci/view/leigod/logs.htm
 
-# 独立端口页面 (uhttpd 第二实例, 8081, 无需登录 LuCI)
+# 独立端口页面 (uhttpd 第二实例, 默认 8081, 无需登录 LuCI)
 mkdir -p /www-leigod/cgi-bin
 cp -f www-leigod/cgi-bin/leigod /www-leigod/cgi-bin/leigod
 chmod 755 /www-leigod/cgi-bin/leigod
+# 写入访问密钥(脚本顶部 AUTH_PASS 变量, 非空时自动注入)
+if [ -n "$AUTH_PASS" ]; then
+	sed -i "s|^local AUTH_PASS = \"\"$|local AUTH_PASS = \"$AUTH_PASS\"|" /www-leigod/cgi-bin/leigod
+	echo "访问密钥已写入"
+fi
 echo '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/cgi-bin/leigod"></head><body></body></html>' > /www-leigod/index.html
 
 uci -q del uhttpd.leigod
 uci set uhttpd.leigod=uhttpd
-uci set uhttpd.leigod.listen_http="0.0.0.0:8081"
+uci set uhttpd.leigod.listen_http="0.0.0.0:$PORT"
 uci set uhttpd.leigod.home="/www-leigod"
 uci set uhttpd.leigod.cgi_prefix="/cgi-bin"
 uci set uhttpd.leigod.network_timeout="30"
@@ -61,8 +71,11 @@ rm -rf /tmp/luci-modulecache /tmp/luci-indexcache /tmp/luci-templatecache 2>/dev
 
 echo "== 安装完成 =="
 echo "LuCI 入口: LuCI -> 服务 -> 雷神加速器 -> 无人值守 (配置 account_token 和游戏设备IP)"
-echo "独立页面:  http://<网关IP>:8081  (仅限内网使用, 勿暴露公网)"
-echo ""
-echo "【部署必做】设置独立页面访问密钥:"
-echo "  编辑 /www-leigod/cgi-bin/leigod, 找到 AUTH_PASS = \"\" , 在引号内填入你的密钥"
-echo "  未设置密钥前, 8081 页面将拒绝所有访问"
+echo "独立页面:  http://<网关IP>:$PORT  (仅限内网使用, 勿暴露公网)"
+if [ -z "$AUTH_PASS" ]; then
+	echo ""
+	echo "【部署必做】设置独立页面访问密钥(二选一):"
+	echo "  1. 编辑 install.sh 顶部 AUTH_PASS 变量后重新执行本脚本"
+	echo "  2. 直接编辑 /www-leigod/cgi-bin/leigod, 找到 AUTH_PASS = \"\" 在引号内填入密钥"
+	echo "  未设置密钥前, 独立页面将拒绝所有访问"
+fi
