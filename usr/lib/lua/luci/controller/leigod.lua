@@ -28,6 +28,10 @@ function action()
 			local api = (act == "billresume") and "/api/user/recover" or "/api/user/pause"
 			luci.sys.call("curl -s -m 8 -A 'Mozilla/5.0' -H 'Origin: https://www.leigod.com' -H 'Referer: https://www.leigod.com/' -H 'Content-Type: application/json' --data '{\"account_token\":\"" .. token .. "\"}' 'https://webapi.leigod.com" .. api .. "?os_type=4&region_code=1&src_channel=guanwang&lang=zh_CN' >/dev/null 2>&1 &")
 		end
+		-- 恢复计费时通知守护重置空闲计时
+		if act == "billresume" then
+			luci.sys.call("touch /tmp/leigod-guard/reset_timer")
+		end
 	end
 	luci.http.redirect(luci.dispatcher.build_url("admin/services/leigod/overview"))
 end

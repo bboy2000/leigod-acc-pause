@@ -69,6 +69,16 @@ while :; do
 	now=$(date +%s)
 	active=0
 
+	# 手动开始计费信号: 空闲计时归零重算, 给用户完整的窗口期
+	if [ -f "$STDIR/reset_timer" ]; then
+		rm -f "$STDIR/reset_timer"
+		for ip in $DEVICES; do
+			echo "$now" > "$STDIR/last_seen.$ip"
+		done
+		paused_period=0
+		log "手动开始计费, 空闲计时已归零重算"
+	fi
+
 	for ip in $DEVICES; do
 		ensure_rule "$ip"
 		# 新设备首次纳入监控时, 以当前时间作为空闲起算点, 避免误判为长期空闲
@@ -158,7 +168,10 @@ while :; do
 			pid=$(jsonfilter -s "$info" -e '@.data.pause_status_id' 2>/dev/null)
 			if [ "$code" = "0" ] && [ -n "$pid" ] && [ "$pid" != "1" ]; then
 				paused_period=0
-				log "检测到云端已恢复计费(可能为App手动操作), 重置暂停周期"
+				for ip in $DEVICES; do
+					echo "$now" > "$STDIR/last_seen.$ip"
+				done
+				log "检测到云端已恢复计费(可能为App手动操作), 重置暂停周期与空闲计时"
 			fi
 		fi
 		if [ "$paused_period" = "1" ]; then
