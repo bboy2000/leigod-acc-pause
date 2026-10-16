@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>雷神加速器 LuCI 重设计方案 v1.00</title>
+<style>
+:root{
+  /* ===== 设计令牌 (Design Tokens) ===== */
+  --c-primary:#2e7d32;        /* 主绿: 成功/运行 */
+  --c-primary-soft:#e8f3e9;   /* 主绿浅底 */
+  --c-danger:#c62828;         /* 红: 暂停/异常 */
+  --c-danger-soft:#fdecea;    /* 红浅底 */
+  --c-info:#1565c0;           /* 蓝: 表头/中性强调 */
+  --c-info-soft:#e7f0fb;      /* 蓝浅底 */
+  --c-text:#1f2933;           /* 主文字 */
+  --c-text-2:#616e7c;         /* 次文字 */
+  --c-border:#e4e7eb;         /* 边框 */
+  --c-bg:#f0f2f5;             /* 页面底 */
+  --c-card:#ffffff;           /* 卡片底 */
+  --c-terminal-bg:#1e2430;    /* 日志终端底 */
+  --c-terminal-text:#c9d4e3;  /* 日志终端文字 */
+  --radius-card:12px;
+  --radius-pill:20px;
+  --shadow:0 1px 3px rgba(16,24,40,.10);
+  --font:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  --mono:"Consolas","JetBrains Mono",monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:var(--font);background:#dfe3e8;color:var(--c-text);padding:32px 16px;}
+.wrap{max-width:880px;margin:0 auto;}
+.spec-title{font-size:22px;font-weight:700;margin-bottom:4px;}
+.spec-sub{color:#616e7c;font-size:13px;margin-bottom:24px;}
+.sec-label{font-size:14px;font-weight:700;color:#3c4652;margin:36px 0 12px;display:flex;align-items:center;gap:8px;}
+.sec-label::before{content:"";width:4px;height:16px;background:var(--c-info);border-radius:2px;}
+
+/* ===== 浏览器窗框 ===== */
+.browser{background:var(--c-bg);border-radius:12px;box-shadow:0 8px 30px rgba(16,24,40,.18);overflow:hidden;border:1px solid #cbd2d9;}
+.browser-bar{background:#d8dce1;padding:8px 14px;display:flex;gap:6px;align-items:center;}
+.dot{width:10px;height:10px;border-radius:50%;}
+.url{background:#fff;border-radius:6px;font-size:11px;color:#8a94a0;padding:3px 12px;margin-left:8px;flex:1;font-family:var(--mono);}
+.page{padding:20px;}
+
+/* ===== 页头: 标题 + 启停按钮右置 ===== */
+.page-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;}
+.page-head h1{font-size:18px;font-weight:700;}
+.btns{display:flex;gap:8px;}
+.btn{border:none;border-radius:8px;padding:7px 18px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);}
+.btn-start{background:var(--c-primary);color:#fff;}
+.btn-restart{background:var(--c-info-soft);color:var(--c-info);}
+.btn-stop{background:#fff;color:var(--c-danger);border:1px solid var(--c-danger);}
+
+/* ===== KPI 三卡 ===== */
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px;}
+.card{background:var(--c-card);border:1px solid var(--c-border);border-radius:var(--radius-card);box-shadow:var(--shadow);padding:14px 16px;}
+.kpi-label{font-size:12px;color:var(--c-text-2);margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;}
+.kpi-label .en{font-size:10px;font-family:var(--mono);color:#9aa4b0;}
+.pill{display:inline-block;border-radius:var(--radius-pill);padding:4px 16px;font-size:13px;font-weight:700;}
+.pill-ok{background:var(--c-primary-soft);color:var(--c-primary);}
+.pill-bad{background:var(--c-danger-soft);color:var(--c-danger);}
+.pill-info{background:var(--c-info-soft);color:var(--c-info);}
+.kpi-big{font-size:22px;font-weight:700;}
+
+/* ===== 倒计时 Hero 卡 ===== */
+.hero{display:flex;gap:20px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:12px;}
+.hero-left{flex:1;min-width:260px;}
+.hero-label{font-size:12px;color:var(--c-text-2);margin-bottom:6px;}
+.hero-num{font-family:var(--mono);font-size:56px;font-weight:700;letter-spacing:2px;color:var(--c-primary);line-height:1;}
+.hero-num.warn{color:#e65100;}
+.hero-meta{font-size:12px;color:var(--c-text-2);margin-top:8px;}
+.bar{height:8px;background:#e8ebee;border-radius:4px;overflow:hidden;margin-top:10px;}
+.bar>i{display:block;height:100%;width:40%;background:linear-gradient(90deg,var(--c-primary),#66bb6a);border-radius:4px;}
+.hero-right{width:250px;background:var(--c-primary-soft);border-radius:10px;padding:14px 16px;font-size:12px;color:#33513a;line-height:2;}
+.hero-right b{color:var(--c-primary);}
+
+/* ===== 设备表格卡 ===== */
+.tbl{width:100%;border-collapse:separate;border-spacing:0;margin-top:4px;}
+.tbl th{background:var(--c-info);color:#fff;font-size:13px;padding:9px 0;font-weight:600;text-align:center;}
+.tbl th:first-child{border-radius:8px 0 0 8px;}
+.tbl th:last-child{border-radius:0 8px 8px 0;}
+.tbl td{text-align:center;padding:9px 0;font-size:13px;color:#3c4652;border-bottom:1px solid var(--c-border);}
+.tbl tr:last-child td{border-bottom:none;}
+.tbl .mono{font-family:var(--mono);}
+.foot-note{text-align:center;font-size:12px;color:#9aa4b0;margin-top:10px;}
+
+/* ===== 日志终端卡 ===== */
+.term{background:var(--c-terminal-bg);border-radius:10px;padding:14px 16px;font-family:var(--mono);font-size:12px;line-height:1.9;color:var(--c-terminal-text);overflow-x:auto;}
+.term .t{color:#7d8aa0;}
+.term .ok{color:#7cc47f;}
+.term .warn{color:#f0b45c;}
+.term .err{color:#ef7b7b;}
+
+/* ===== 深色模式 ===== */
+.dark{--c-bg:#121826;--c-card:#1a2233;--c-border:#2a3548;--c-text:#e6ebf2;--c-text-2:#9aa8bb;--c-primary-soft:#1f3a24;--c-danger-soft:#3d1a1a;--c-info-soft:#182c45;--c-primary:#66bb6a;--c-info:#64a5f0;}
+.dark .btn-stop{background:transparent;color:#ef7b7b;border-color:#ef7b7b;}
+.dark .btn-restart{background:var(--c-info-soft);color:var(--c-info);}
+.dark .bar{background:#2a3548;}
+.dark .tbl td{color:#c3cddb;}
+.dark .hero-right{background:var(--c-primary-soft);color:#a9d0ae;}
+.dark .kpi-big,.dark .hero-num{color:var(--c-primary);}
+
+/* ===== 移动端预览 ===== */
+.phone-row{display:flex;gap:24px;flex-wrap:wrap;}
+.phone{width:300px;background:var(--c-bg);border:10px solid #2b3038;border-radius:28px;overflow:hidden;box-shadow:var(--shadow);}
+.phone .page{padding:14px;}
+.phone .kpis{grid-template-columns:1fr 1fr;}
+.phone .hero-num{font-size:44px;}
+.phone .hero-right{width:100%;}
+.caption{font-size:12px;color:#616e7c;margin-top:8px;text-align:center;}
+
+/* ===== 令牌表 ===== */
+.tokens{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;}
+.token{background:#fff;border:1px solid #e4e7eb;border-radius:10px;padding:10px 12px;font-size:12px;}
+.swatch{height:34px;border-radius:6px;margin-bottom:6px;}
+.token .name{font-weight:700;}
+.token .hex{font-family:var(--mono);color:#616e7c;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="spec-title">雷神加速器 LuCI 界面重设计方案</div>
+  <div class="spec-sub">方案 C · 卡片化布局 + 倒计时仪表盘 + 深色模式 + 响应式 ｜ v1.00 设计稿 · 2026-10-16</div>
+
+  <!-- ① 浅色主题全页效果图 -->
+  <div class="sec-label">① 浅色主题 · 运行状态页全貌</div>
+  <div class="browser">
+    <div class="browser-bar">
+      <span class="dot" style="background:#f57373"></span><span class="dot" style="background:#f5c973"></span><span class="dot" style="background:#7cd97c"></span>
+      <span class="url">192.168.1.26/cgi-bin/luci/admin/services/leigod</span>
+    </div>
+    <div class="page">
+      <div class="page-head">
+        <h1>雷神加速器 · 运行状态</h1>
+        <div class="btns">
+          <button class="btn btn-start">启动</button>
+          <button class="btn btn-stop">停止</button>
+          <button class="btn btn-restart">重启</button>
+        </div>
+      </div>
+
+      <div class="kpis">
+        <div class="card">
+          <div class="kpi-label">守护进程 <span class="en">guard</span></div>
+          <span class="pill pill-ok">运行中</span>
+        </div>
+        <div class="card">
+          <div class="kpi-label">插件监控 <span class="en">monitor_running</span></div>
+          <span class="pill pill-ok">正常</span>
+        </div>
+        <div class="card">
+          <div class="kpi-label">计时状态 <span class="en">timer</span></div>
+          <span class="pill pill-bad">暂停计费</span>
+        </div>
+      </div>
+
+      <div class="card hero">
+        <div class="hero-left">
+          <div class="hero-label">距自动暂停倒计时（空闲计时中 · 状态每 10 秒自动刷新）</div>
+          <div class="hero-num warn">01:12</div>
+          <div class="bar"><i></i></div>
+          <div class="hero-meta">空闲 00:48 / 阈值 02:00 ・ 监控设备 1 台</div>
+        </div>
+        <div class="hero-right">
+          当前无游戏流量<br>
+          设备 <b>192.168.1.13</b><br>
+          剩余流量阈值判定中<br>
+          <b>暂停后不再消耗时长</b>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="kpi-label" style="margin-bottom:8px;">游戏设备监控</div>
+        <table class="tbl">
+          <tr><th>游戏设备</th><th>最近活动</th><th>已空闲</th><th>距自动暂停</th></tr>
+          <tr><td class="mono">192.168.1.13</td><td class="mono">16:55:06</td><td class="mono">00:48</td><td class="mono" style="color:#e65100;font-weight:700;">01:12</td></tr>
+        </table>
+        <div class="foot-note">空闲暂停阈值：2 分钟（可在「无人值守」页面调整）</div>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <div class="kpi-label" style="margin-bottom:8px;">守护日志 <span class="en">guard.log · 最近 10 条</span></div>
+        <div class="term">
+          <span class="t">[10-16 17:21:28]</span> leigod-guard 启动<br>
+          <span class="t">[10-16 17:21:29]</span> 无人活动超过 2 分钟，<span class="ok">已自动暂停时长</span><br>
+          <span class="t">[10-16 16:57:29]</span> 云端标记已暂停, 无需操作(防假暂停)<br>
+          <span class="t">[10-16 16:56:28]</span> leigod-guard 启动<br>
+          <span class="t">[10-16 15:41:21]</span> <span class="warn">启动 acc: tun 模式 (5588 端口)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="caption">启停按钮移到页头右侧 · 三张 KPI 状态卡 · 倒计时大数字 + 进度条 · 日志改终端暗色风格</div>
+
+  <!-- ② 深色模式 -->
+  <div class="sec-label">② 深色模式（同一套令牌，仅换变量值）</div>
+  <div class="browser dark" style="background:#121826;">
+    <div class="browser-bar" style="background:#0b0f18;">
+      <span class="dot" style="background:#f57373"></span><span class="dot" style="background:#f5c973"></span><span class="dot" style="background:#7cd97c"></span>
+      <span class="url" style="background:#1a2233;color:#5c6a80;">192.168.1.26 — dark mode</span>
+    </div>
+    <div class="page">
+      <div class="page-head">
+        <h1>雷神加速器 · 运行状态</h1>
+        <div class="btns">
+          <button class="btn btn-start" style="background:var(--c-primary);color:#0d1117;">启动</button>
+          <button class="btn btn-stop">停止</button>
+          <button class="btn btn-restart">重启</button>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="card"><div class="kpi-label">守护进程</div><span class="pill pill-ok">运行中</span></div>
+        <div class="card"><div class="kpi-label">插件监控</div><span class="pill pill-ok">正常</span></div>
+        <div class="card"><div class="kpi-label">计时状态</div><span class="pill pill-bad">暂停计费</span></div>
+      </div>
+      <div class="card hero">
+        <div class="hero-left">
+          <div class="hero-label">距自动暂停倒计时</div>
+          <div class="hero-num">01:12</div>
+          <div class="bar"><i style="background:linear-gradient(90deg,var(--c-primary),#9cda9f);"></i></div>
+          <div class="hero-meta">空闲 00:48 / 阈值 02:00</div>
+        </div>
+        <div class="hero-right">深色模式下卡片/文字/状态色自动切换<br>对比度同样满足 AA 标准</div>
+      </div>
+    </div>
+  </div>
+  <div class="caption">CSS 变量整体换肤，组件结构零改动 · 深色底 #121826 / 卡片 #1a2233 / 主绿提亮为 #66bb6a</div>
+
+  <!-- ③ 移动端 -->
+  <div class="sec-label">③ 响应式 · 手机访问（≤640px 两列折叠）</div>
+  <div class="phone-row">
+    <div>
+      <div class="phone">
+        <div class="page">
+          <div class="page-head" style="margin-bottom:12px;">
+            <h1 style="font-size:15px;">雷神加速器 · 运行状态</h1>
+          </div>
+          <div class="kpis">
+            <div class="card"><div class="kpi-label">守护进程</div><span class="pill pill-ok" style="font-size:11px;padding:3px 12px;">运行中</span></div>
+            <div class="card"><div class="kpi-label">插件监控</div><span class="pill pill-ok" style="font-size:11px;padding:3px 12px;">正常</span></div>
+            <div class="card"><div class="kpi-label">计时状态</div><span class="pill pill-bad" style="font-size:11px;padding:3px 12px;">暂停计费</span></div>
+            <div class="card"><div class="kpi-label">距自动暂停</div><div class="hero-num warn" style="font-size:26px;">01:12</div></div>
+          </div>
+          <div class="card">
+            <div class="kpi-label" style="margin-bottom:6px;">游戏设备监控</div>
+            <table class="tbl">
+              <tr><th>设备</th><th>已空闲</th><th>倒计时</th></tr>
+              <tr><td class="mono" style="font-size:11px;">192.168.1.13</td><td class="mono">00:48</td><td class="mono" style="color:#e65100;font-weight:700;">01:12</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="caption">3 列 KPI → 2 列 · 表格列自动精简 · 倒计时大数字保留</div>
+    </div>
+
+    <!-- ④ 令牌表 -->
+    <div style="flex:1;min-width:280px;">
+      <div class="sec-label" style="margin-top:0;">④ 设计令牌</div>
+      <div class="tokens">
+        <div class="token"><div class="swatch" style="background:#2e7d32;"></div><div class="name">主绿 primary</div><div class="hex">#2e7d32 · 运行/正常 · 对比度 5.1:1 ✓</div></div>
+        <div class="token"><div class="swatch" style="background:#c62828;"></div><div class="name">警示红 danger</div><div class="hex">#c62828 · 暂停/异常 · 5.9:1 ✓</div></div>
+        <div class="token"><div class="swatch" style="background:#1565c0;"></div><div class="name">强调蓝 info</div><div class="hex">#1565c0 · 表头/信息 · 6.3:1 ✓</div></div>
+        <div class="token"><div class="swatch" style="background:#e65100;"></div><div class="name">倒计时橙</div><div class="hex">#e65100 · 计时临近 · 3.6:1(大字✓)</div></div>
+        <div class="token"><div class="swatch" style="background:#1f2933;"></div><div class="name">主文字</div><div class="hex">#1f2933 · 14.7:1 ✓</div></div>
+        <div class="token"><div class="swatch" style="background:#f0f2f5;border:1px solid #ddd;"></div><div class="name">页面底</div><div class="hex">#f0f2f5 · 卡片白 · 边框 #e4e7eb</div></div>
+      </div>
+      <div style="background:#fff;border:1px solid #e4e7eb;border-radius:10px;padding:12px 14px;font-size:12px;color:#3c4652;margin-top:12px;line-height:2;">
+        <b>交互规则</b><br>
+        · 状态区每 10s AJAX 局部刷新（免手动 F5）<br>
+        · 倒计时 &lt;30s 时数字转橙 + 轻微脉冲动画<br>
+        · 触控目标 ≥44px · 圆角 12px 卡片 / 20px 徽章<br>
+        · 所有色值满足 WCAG AA（倒计时橙为大号粗体字）
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

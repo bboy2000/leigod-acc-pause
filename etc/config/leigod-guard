@@ -1,0 +1,6 @@
+config guard 'config'
+	option idle_minutes '15'
+	option poll_seconds '30'
+	option min_bytes '102400'
+	option auto_resume '0'
+	option token ''

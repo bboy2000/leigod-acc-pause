@@ -1,0 +1,293 @@
+#!/usr/bin/lua
+--[[
+  雷神加速器 独立状态页 CGI (脱离 QWRT LuCI 框架)
+  由 uhttpd 第二实例(默认 8081 端口)以 CGI 方式运行
+  数据与 LuCI 版运行状态页完全一致: KPI/倒计时Hero/计费开关/设备表/日志
+--]]
+
+local function esc(s)
+	return tostring(s or ""):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+end
+
+local function sh(c)
+	local f = io.popen(c .. " 2>/dev/null")
+	local o = f and f:read("*a") or ""
+	if f then f:close() end
+	return o or ""
+end
+
+local function uci_get(k)
+	local v = sh("uci -q get leigod-guard.config." .. k)
+	return (v:gsub("%s+", ""))
+end
+
+-- ===== POST 动作处理 =====
+if (os.getenv("REQUEST_METHOD") or "") == "POST" then
+	local len = tonumber(os.getenv("CONTENT_LENGTH") or "0") or 0
+	if len > 0 and len < 1024 then
+		local body = io.read(len) or ""
+		local act = body:match("act=([a-z]+)")
+		if act == "start" or act == "stop" or act == "restart" then
+			os.execute("ubus call leigod " .. act .. " >/dev/null 2>&1 &")
+		elseif act == "billpause" or act == "billresume" then
+			local token = uci_get("token")
+			if token ~= "" then
+				local api = (act == "billresume") and "/api/user/recover" or "/api/user/pause"
+				os.execute("curl -s -m 8 -A 'Mozilla/5.0' -H 'Origin: https://www.leigod.com' -H 'Referer: https://www.leigod.com/' -H 'Content-Type: application/json' --data '{\"account_token\":\"" .. token .. "\"}' 'https://webapi.leigod.com" .. api .. "?os_type=4&region_code=1&src_channel=guanwang&lang=zh_CN' >/dev/null 2>&1 &")
+			end
+		end
+	end
+	io.write("Status: 303 See Other\r\nLocation: /cgi-bin/leigod\r\n\r\n")
+	return
+end
+
+io.write("Content-Type: text/html; charset=utf-8\r\n\r\n")
+
+-- ===== 数据采集 =====
+local idle_min = tonumber(uci_get("idle_minutes") or "15") or 15
+local auto_resume = tonumber(uci_get("auto_resume") or "0") or 0
+local token = uci_get("token")
+
+local alive = os.execute("pgrep -f leigod-guard.sh >/dev/null 2>&1") == 0
+local mr = sh("ubus call leigod get_status 2>/dev/null | jsonfilter -e '@.monitor_running'")
+mr = mr:gsub("%s+", "")
+local statefile = io.open("/tmp/leigod-guard/state", "r")
+local gstate = statefile and statefile:read("*l") or ""
+if statefile then statefile:close() end
+
+-- 云端实时计费状态
+local cloud_pid = nil
+if token ~= "" then
+	local r = sh("curl -s -m 5 -A 'Mozilla/5.0' -H 'Origin: https://www.leigod.com' -H 'Referer: https://www.leigod.com/' -H 'Content-Type: application/json' --data '{\"account_token\":\"" .. token .. "\"}' 'https://webapi.leigod.com/api/user/info?os_type=4&region_code=1&src_channel=guanwang&lang=zh_CN' | jsonfilter -e '@.data.pause_status_id'")
+	r = r:gsub("%s+", "")
+	if r ~= "" then cloud_pid = r end
+end
+local billing_paused = (cloud_pid == "1") or (cloud_pid == nil and gstate == "paused")
+
+local function fmt(sec)
+	sec = math.max(0, math.floor(sec))
+	return string.format("%02d:%02d", math.floor(sec / 60), sec % 60)
+end
+
+-- 设备列表
+local devs = {}
+for ip in (uci_get("devices") or ""):gmatch("%S+") do devs[#devs+1] = ip end
+
+local threshold = idle_min * 60
+local max_idle = 0
+local rows = {}
+for _, ip in ipairs(devs) do
+	local lf = io.open("/tmp/leigod-guard/last_seen." .. ip, "r")
+	local ls = lf and tonumber(lf:read("*l") or "")
+	if lf then lf:close() end
+	local laststr, idlestr, leftstr
+	if ls then
+		local idle = os.time() - ls
+		if idle < 0 then idle = 0 end
+		if idle > max_idle then max_idle = idle end
+		laststr = os.date("%H:%M:%S", ls)
+		idlestr = fmt(idle)
+		local left = threshold - idle
+		leftstr = (left > 0) and fmt(left) or "已达阈值"
+	else
+		laststr, idlestr, leftstr = "-", "-", "-"
+	end
+	rows[#rows+1] = { ip, laststr, idlestr, leftstr }
+end
+local remaining = math.max(0, threshold - max_idle)
+local pct = math.min(100, math.floor(max_idle * 100 / threshold))
+
+-- 计时状态判定
+local sd_txt, sd_bad
+if not alive then
+	sd_txt, sd_bad = "守护未运行", true
+elseif billing_paused then
+	sd_txt, sd_bad = "暂停计费", true
+elseif cloud_pid == "0" then
+	if gstate == "active" then sd_txt, sd_bad = "设备活动中", false
+	elseif gstate == "counting" then sd_txt, sd_bad = "空闲计时中", false
+	else sd_txt, sd_bad = "计费中", false end
+elseif gstate == "active" then
+	sd_txt, sd_bad = "设备活动中", false
+elseif gstate == "counting" then
+	sd_txt, sd_bad = "空闲计时中", false
+else
+	sd_txt, sd_bad = "等待数据", true
+end
+
+-- 日志
+local loglines = {}
+local lf = io.open("/tmp/leigod-guard/guard.log", "r")
+if lf then
+	local all = {}
+	for line in lf:lines() do all[#all+1] = line end
+	lf:close()
+	local start = #all > 10 and (#all - 9) or 1
+	for i = start, #all do
+		local line = all[i]
+		local cls = ""
+		if line:match("已自动暂停") or line:match("自动恢复") then cls = "ok"
+		elseif line:match("失败") or line:match("失效") or line:match("异常") or line:match("未运行") then cls = "err" end
+		loglines[#loglines+1] = '<span class="t">' .. esc(line:sub(1, 17)) .. '</span><span class="' .. cls .. '">' .. esc(line:sub(18) or "") .. "</span>"
+	end
+end
+
+-- ===== HTML 输出 =====
+local H = {}
+H[#H+1] = [==[<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>雷神加速器 · 运行状态</title>
+<style>
+:root{
+  --lg-primary:#2e7d32; --lg-primary-soft:#e8f3e9;
+  --lg-danger:#c62828;  --lg-danger-soft:#fdecea;
+  --lg-info:#1565c0;    --lg-info-soft:#e7f0fb;
+  --lg-text:#1f2933;    --lg-text-2:#616e7c;
+  --lg-border:#e4e7eb;  --lg-bg:#f0f2f5; --lg-card:#ffffff;
+  --lg-term-bg:#1e2430; --lg-term-text:#c9d4e3;
+  --lg-radius:12px; --lg-pill:20px;
+  --lg-shadow:0 1px 3px rgba(16,24,40,.10);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --lg-bg:#121826; --lg-card:#1a2233; --lg-border:#2a3548;
+    --lg-text:#e6ebf2; --lg-text-2:#9aa8bb;
+    --lg-primary:#66bb6a; --lg-primary-soft:#1f3a24;
+    --lg-danger:#ef7b7b;  --lg-danger-soft:#3d1a1a;
+    --lg-info:#64a5f0;    --lg-info-soft:#182c45;
+  }
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--lg-bg);color:var(--lg-text);font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;padding:24px 16px;}
+.wrap{max-width:760px;margin:0 auto;}
+.card{background:var(--lg-card);border:1px solid var(--lg-border);border-radius:var(--lg-radius);box-shadow:var(--lg-shadow);padding:14px 16px;margin-bottom:12px;}
+.head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;}
+.head .t{font-size:18px;font-weight:700;}
+.btns{display:flex;gap:8px;}
+.btn{border:none;border-radius:8px;padding:7px 18px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;}
+.btn-start{background:var(--lg-primary);color:#fff;}
+.btn-stop{background:transparent;color:var(--lg-danger);border:1px solid var(--lg-danger);}
+.btn-restart{background:var(--lg-info-soft);color:var(--lg-info);border:1px solid var(--lg-border);}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+.kpi-label{font-size:12px;color:var(--lg-text-2);margin-bottom:10px;}
+.pill{display:inline-block;border-radius:var(--lg-pill);padding:4px 16px;font-size:13px;font-weight:700;}
+.pill-ok{background:var(--lg-primary-soft);color:var(--lg-primary);}
+.pill-bad{background:var(--lg-danger-soft);color:var(--lg-danger);}
+.hero{display:flex;gap:20px;align-items:center;justify-content:space-between;flex-wrap:wrap;}
+.hero-label{font-size:12px;color:var(--lg-text-2);margin-bottom:6px;}
+.num{font-family:Consolas,"JetBrains Mono",monospace;font-size:52px;font-weight:700;letter-spacing:2px;line-height:1;color:var(--lg-primary);}
+.num.warn{color:#e65100;animation:pulse 1s ease-in-out infinite;}
+.num.bad{color:var(--lg-danger);font-size:38px;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.55;}}
+.bar{height:8px;background:var(--lg-border);border-radius:4px;overflow:hidden;margin-top:10px;}
+.bar i{display:block;height:100%;border-radius:4px;}
+.meta{font-size:12px;color:var(--lg-text-2);margin-top:8px;}
+.hero-side{flex:1;min-width:220px;background:var(--lg-primary-soft);border-radius:10px;padding:12px 16px;font-size:12px;line-height:2;color:var(--lg-text);}
+.bill-btn{display:inline-block;border:none;border-radius:8px;padding:8px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:12px;}
+.bill-start{background:var(--lg-primary);color:#fff;}
+.bill-stop{background:transparent;color:var(--lg-danger);border:1px solid var(--lg-danger);}
+.bill-note{font-size:11px;color:var(--lg-text-2);margin-top:6px;}
+.tbl{width:100%;border-collapse:separate;border-spacing:0;}
+.tbl th{background:var(--lg-info);color:#fff;font-size:13px;padding:9px 0;font-weight:600;text-align:center;}
+.tbl th:first-child{border-radius:8px 0 0 8px;}
+.tbl th:last-child{border-radius:0 8px 8px 0;}
+.tbl td{text-align:center;padding:9px 0;font-size:13px;color:var(--lg-text);border-bottom:1px solid var(--lg-border);font-family:Consolas,monospace;}
+.tbl tr:last-child td{border-bottom:none;}
+.note{text-align:center;font-size:12px;color:var(--lg-text-2);margin-top:10px;}
+.term{background:var(--lg-term-bg);border-radius:10px;padding:14px 16px;font-family:Consolas,monospace;font-size:12px;line-height:1.9;color:var(--lg-term-text);overflow-x:auto;}
+.term .t{color:#7d8aa0;}
+.term .ok{color:#7cc47f;}
+.term .err{color:#ef7b7b;}
+@media (max-width:640px){
+  .kpis{grid-template-columns:1fr 1fr;}
+  .num{font-size:38px;}
+  .head .t{font-size:15px;}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+	<div class="head">
+		<div class="t">雷神加速器 · 运行状态</div>
+		<div class="btns">
+			<form style="display:inline;margin:0;" method="post"><input type="hidden" name="act" value="start"><button type="submit" class="btn btn-start">启动</button></form>
+			<form style="display:inline;margin:0;" method="post"><input type="hidden" name="act" value="stop"><button type="submit" class="btn btn-stop">停止</button></form>
+			<form style="display:inline;margin:0;" method="post"><input type="hidden" name="act" value="restart"><button type="submit" class="btn btn-restart">重启</button></form>
+		</div>
+	</div>
+	<div id="lg-dynamic">
+	<div class="kpis">
+		<div class="card"><div class="kpi-label">守护进程</div><span class="pill ]==] .. (alive and [[pill-ok">运行中]] or [[pill-bad">未运行]]) .. [==[</span></div>
+		<div class="card"><div class="kpi-label">插件监控 (monitor_running)</div><span class="pill ]==] .. (mr == "true" and [[pill-ok">正常]] or [[pill-bad">异常]]) .. [==[</span></div>
+		<div class="card"><div class="kpi-label">计时状态</div><span class="pill ]==] .. (sd_bad and [[pill-bad">]] .. esc(sd_txt) or [[pill-ok">]] .. esc(sd_txt)) .. [==[</span></div>
+	</div>
+	<div class="card hero">
+		<div style="flex:1;min-width:260px;">
+]==]
+
+if not alive then
+	H[#H+1] = '<div class="hero-label">守护进程状态</div><div class="num bad">守护未运行</div><div class="meta">请检查 /etc/init.d/leigod-guard 服务状态</div>'
+elseif billing_paused then
+	H[#H+1] = '<div class="hero-label">计费状态</div><div class="num bad">计费已暂停</div><div class="meta">设备活动后' .. (auto_resume == 1 and "自动恢复计费" or "需手动恢复或在雷神 App 操作") .. '</div>'
+	H[#H+1] = '<form style="margin:0;" method="post"><input type="hidden" name="act" value="billresume"><button type="submit" class="bill-btn bill-start">▶ 开始计费</button></form><div class="bill-note">注意：无游戏流量时守护会在约 1 分钟内自动重新暂停</div>'
+elseif cloud_pid == "0" and gstate == "paused" then
+	H[#H+1] = '<div class="hero-label">计费状态</div><div class="num">计费中</div><div class="meta">云端已恢复计费（App 手动操作），守护正在同步状态</div>'
+	H[#H+1] = '<form style="margin:0;" method="post"><input type="hidden" name="act" value="billpause"><button type="submit" class="bill-btn bill-stop">⏸ 暂停计费</button></form>'
+elseif gstate == "active" then
+	H[#H+1] = '<div class="hero-label">实时状态</div><div class="num">设备活动中</div><div class="meta">检测到游戏流量，空闲计时已重置</div>'
+	H[#H+1] = '<form style="margin:0;" method="post"><input type="hidden" name="act" value="billpause"><button type="submit" class="bill-btn bill-stop">⏸ 暂停计费</button></form><div class="bill-note">立即暂停计费，不影响游戏加速通道</div>'
+else
+	local numcls = (remaining <= 30) and "num warn" or "num"
+	local barbg = (remaining <= 30) and "background:#e65100;" or "background:linear-gradient(90deg,var(--lg-primary),#66bb6a);"
+	H[#H+1] = '<div class="hero-label">距自动暂停倒计时（每 10 秒自动刷新）</div><div class="' .. numcls .. '">' .. fmt(remaining) .. '</div>'
+	H[#H+1] = '<div class="bar"><i style="width:' .. pct .. '%;' .. barbg .. '"></i></div>'
+	H[#H+1] = '<div class="meta">空闲 ' .. fmt(max_idle) .. ' / 阈值 ' .. idle_min .. ':00 ・ 监控设备 ' .. #devs .. ' 台</div>'
+	H[#H+1] = '<form style="margin:0;" method="post"><input type="hidden" name="act" value="billpause"><button type="submit" class="bill-btn bill-stop">⏸ 暂停计费</button></form><div class="bill-note">立即暂停计费，无需等待空闲倒计时</div>'
+end
+
+H[#H+1] = '</div><div class="hero-side">'
+if billing_paused then
+	H[#H+1] = '当前无计费消耗<br>暂停期间<b>不消耗时长</b><br>监控仍在后台运行'
+else
+	H[#H+1] = '监控设备 <b>' .. #devs .. '</b> 台<br>采样间隔 30 秒<br>活跃判定 100KB/采样<br>空闲达阈值<b>自动暂停计费</b>'
+end
+H[#H+1] = '</div></div>'
+
+H[#H+1] = '<div class="card"><div class="kpi-label" style="margin-bottom:8px;">游戏设备监控</div>'
+if #rows > 0 then
+	H[#H+1] = '<table class="tbl"><tr><th>游戏设备</th><th>最近活动</th><th>已空闲</th><th>距自动暂停</th></tr>'
+	for _, r in ipairs(rows) do
+		H[#H+1] = "<tr><td>" .. esc(r[1]) .. "</td><td>" .. r[2] .. "</td><td>" .. r[3] .. "</td><td>" .. esc(r[4]) .. "</td></tr>"
+	end
+	H[#H+1] = "</table>"
+else
+	H[#H+1] = '<div class="note">尚未配置监控设备，请到 LuCI「无人值守」页面添加游戏设备 IP</div>'
+end
+H[#H+1] = '<div class="note">空闲暂停阈值：' .. idle_min .. ' 分钟（可在 LuCI「无人值守」页面调整）</div></div>'
+
+H[#H+1] = '</div><div class="card"><div class="kpi-label" style="margin-bottom:8px;">守护日志（最近 10 条）</div>'
+if #loglines > 0 then
+	H[#H+1] = '<div class="term">' .. table.concat(loglines, "<br>") .. '</div>'
+else
+	H[#H+1] = '<div class="note">暂无日志</div>'
+end
+H[#H+1] = [==[</div>
+</div>
+<script>
+setInterval(function(){
+	var box = document.getElementById("lg-dynamic");
+	if(!box) return;
+	fetch(location.href, {credentials:"same-origin"}).then(function(r){return r.text();}).then(function(t){
+		var d = new DOMParser().parseFromString(t, "text/html");
+		var nd = d.getElementById("lg-dynamic");
+		if(nd){ box.innerHTML = nd.innerHTML; }
+	}).catch(function(){});
+}, 10000);
+</script>
+</body>
+</html>]==]
+
+io.write(table.concat(H, "\n"))

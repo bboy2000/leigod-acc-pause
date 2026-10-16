@@ -1,0 +1,7 @@
+<%+header%>
+<h2><a href="<%=pcdata(luci.dispatcher.build_url("admin/services/leigod"))%>">雷神加速器</a> » 运行日志</h2>
+<%
+local logs = luci.sys.exec("ubus call leigod get_logs 2>&1")
+%>
+<pre style="background:#f6f6f6;border:1px solid #ddd;padding:10px;white-space:pre-wrap;"><%=pcdata(logs)%></pre>
+<%+footer%>
