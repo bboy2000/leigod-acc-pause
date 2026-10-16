@@ -12,11 +12,37 @@ WORKDIR="/tmp/leigod-install"
 echo "== leigod-acc-pause 安装 =="
 
 # 前置检查
-command -v curl >/dev/null 2>&1 || { echo "错误: 缺少 curl, 请先执行: opkg update && opkg install curl"; exit 1; }
 if [ ! -f /etc/config/leigod-manager ]; then
 	echo "错误: 未检测到 luci-app-leigod-manager (雷神官方插件)，请先安装"
 	exit 1
 fi
+
+# ---- 依赖自动安装 (雷神插件必要组件 + 本项目组件, 参考 miaoermua/openwrt-leigodacc-manager) ----
+DEPS="libpcap iptables kmod-ipt-nat iptables-mod-tproxy kmod-ipt-tproxy kmod-ipt-ipset ipset kmod-tun curl miniupnpd jsonfilter lua uhttpd tc-full kmod-netem conntrack conntrackd"
+MISSING=""
+for p in $DEPS; do
+	opkg list-installed 2>/dev/null | grep -q "^$p " || MISSING="$MISSING $p"
+done
+if [ -n "$MISSING" ]; then
+	echo "检测到缺少依赖:$MISSING"
+	echo "正在自动安装 (opkg update 可能较慢, 请耐心等待)..."
+	opkg update >/dev/null 2>&1
+	opkg install $MISSING
+	STILL=""
+	for p in $MISSING; do
+		opkg list-installed 2>/dev/null | grep -q "^$p " || STILL="$STILL $p"
+	done
+	if [ -n "$STILL" ]; then
+		echo "警告: 以下依赖安装失败:$STILL"
+		echo "  (一般是固件软件源不含该组件; tc-full/conntrack 等为非必要组件可忽略,"
+		echo "   libpcap/tproxy/ipset/kmod-tun 等必要组件缺失请先更换固件软件源)"
+	else
+		echo "依赖已补齐"
+	fi
+else
+	echo "依赖检查通过"
+fi
+command -v curl >/dev/null 2>&1 || { echo "错误: 缺少 curl 且自动安装失败, 请手动执行: opkg update && opkg install curl"; exit 1; }
 
 # ---- 文件来源: 当前目录有仓库文件则直接用(整包上传方式); 否则从 CDN 自动下载 ----
 if [ -f usr/bin/leigod-guard.sh ]; then

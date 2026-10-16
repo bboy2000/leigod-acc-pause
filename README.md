@@ -131,7 +131,7 @@ rm -rf /tmp/leigod-guard /tmp/luci-modulecache /tmp/luci-indexcache
 
 - 已安装 [luci-app-leigod-manager](https://github.com/Arlen-Du/luci-app-leigod-manager/releases)（雷神官方网关插件）
 - OpenWrt 为 **Lua 版 LuCI**（QWRT/iStoreOS 等国产固件基本是；官方 21.02+ 原版是 JS 版不适用）
-- 网关已安装 `curl`、`jsonfilter`、`iptables`、`lua`（QWRT 默认都有）
+- 依赖包（libpcap、iptables/tproxy/ipset 系列、kmod-tun、curl、miniupnpd、jsonfilter、lua、uhttpd、tc、conntrack 等）由安装脚本**自动检测并安装**，无需手动准备；固件源不含的非必要组件缺失会被跳过并提示
 
 ## 常见问题
 
