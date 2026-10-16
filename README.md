@@ -46,20 +46,17 @@ GitHub 的 fork 无法直接转为私有，推荐用 **Import** 方式复制：
 
 ### 第三步：上传到网关
 
-把整个仓库传到路由器（任选其一）：
+用 FinalShell / WinSCP 等图形工具连接网关（协议 SFTP，或直接用 FinalShell 的文件面板），把**整个仓库目录**拖到网关的 `/tmp/leigod-install` 目录下。
 
-```sh
-# 方式A: 从你的电脑 scp 上传(在仓库目录执行)
-scp -r . root@<网关IP>:/tmp/leigod-install
-
-# 方式B: 先 Download ZIP 解压后上传, 或用 WinSCP 等图形工具拖上去
-```
+> 前提：你已在 FinalShell 等工具里 SSH 登录了网关（root@<网关IP>）。下面的所有命令都是**登录网关之后、在网关命令行里直接执行**的。
 
 ### 第四步：一键安装
 
+SSH 登录网关后，在网关命令行执行：
+
 ```sh
-ssh root@<网关IP>
-sh /tmp/leigod-install/install.sh
+cd /tmp/leigod-install
+sh install.sh
 ```
 
 脚本自动完成：文件复制与权限（**保留已有 UCI 运行配置**）、初始端口/密钥写入路由器配置、8081 独立页面与 uhttpd 第二实例、LuCI 缓存清理、服务开机自启。安装完成后按提示操作。
@@ -93,15 +90,19 @@ http://<网关IP>:8081
 
 你的私有副本更新后（同步了上游或自己改了代码）：
 
+1. 重新上传覆盖：用 FinalShell / WinSCP 把仓库目录拖到网关 `/tmp/leigod-install`（覆盖旧文件）
+2. SSH 登录网关后，在网关命令行执行：
+
 ```sh
-git pull   # 或重新下载 ZIP 覆盖
-scp -r . root@<网关IP>:/tmp/leigod-install
-ssh root@<网关IP> "sh /tmp/leigod-install/install.sh"
+cd /tmp/leigod-install
+sh install.sh
 ```
 
 重新安装会覆盖路由器上的程序文件，但**不会**动你已配置的 account_token、设备列表等 UCI 运行配置。
 
 ## 卸载
+
+SSH 登录网关后，在网关命令行执行：
 
 ```sh
 /etc/init.d/leigod-guard stop && /etc/init.d/leigod-guard disable
