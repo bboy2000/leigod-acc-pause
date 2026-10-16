@@ -11,12 +11,6 @@ WORKDIR="/tmp/leigod-install"
 
 echo "== leigod-acc-pause 安装 =="
 
-# 前置检查
-if [ ! -f /etc/config/leigod-manager ]; then
-	echo "错误: 未检测到 luci-app-leigod-manager (雷神官方插件)，请先安装"
-	exit 1
-fi
-
 # ---- 依赖自动安装 (雷神插件必要组件 + 本项目组件, 参考 miaoermua/openwrt-leigodacc-manager) ----
 # 兼容两种包管理器: opkg(传统 OpenWrt/QWRT) 与 apk(iStoreOS 24.10+/25.x 等新固件)
 if command -v opkg >/dev/null 2>&1; then
@@ -69,6 +63,30 @@ else
 	echo "依赖检查通过 (包管理器: $PKG)"
 fi
 command -v curl >/dev/null 2>&1 || { echo "错误: 缺少 curl 且自动安装失败, 请手动安装 curl 后重试"; exit 1; }
+
+# ---- 雷神官方插件(acc 加速核心): 未安装时自动调官方安装器 ----
+# 两种安装形态都认可: miaoermua/ipk/apk 包(标记 /etc/config/leigod-manager)
+#                    或官方 plugin_install.sh(标记 /etc/config/accelerator)
+if [ -f /etc/config/leigod-manager ]; then
+	echo "检测到雷神官方插件 (luci-app 包)"
+elif [ -f /etc/config/accelerator ]; then
+	echo "检测到雷神官方插件 (官方安装器版)"
+else
+	echo "未检测到雷神官方插件, 正在自动安装 acc 加速核心 (官方源)..."
+	curl -fsSL http://119.3.40.126/router_plugin/plugin_install.sh -o /tmp/leigod_plugin_install.sh
+	if [ $? != 0 ]; then
+		echo "错误: 官方插件安装脚本下载失败, 请检查网络后重试"
+		exit 1
+	fi
+	sh /tmp/leigod_plugin_install.sh
+	rm -f /tmp/leigod_plugin_install.sh /tmp/plugin_common.sh
+	if [ ! -f /etc/config/accelerator ]; then
+		echo "错误: 官方插件自动安装失败, 请手动执行以下命令后再重装本项目:"
+		echo "  sh -c \"\$(curl -fsSL http://119.3.40.126/router_plugin/plugin_install.sh)\""
+		exit 1
+	fi
+	echo "官方插件 (acc 加速核心) 安装完成"
+fi
 
 # ---- 文件来源: 当前目录有仓库文件则直接用(整包上传方式); 否则从 CDN 自动下载 ----
 if [ -f usr/bin/leigod-guard.sh ]; then
