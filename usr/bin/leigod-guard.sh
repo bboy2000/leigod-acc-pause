@@ -24,6 +24,10 @@ log() { echo "[$(date '+%m-%d %H:%M:%S')] $1" >> "$LOG"; }
 cfg() { uci -q get leigod-guard.config.$1; }
 
 log "leigod-guard 启动"
+# conntrack 字节统计需要 acct 开启: 新版加速核心(acc-gw v1.2.2.71+)以 TPROXY/自建
+# nft 规则接管流量, 已建立连接的持续数据包不再经过 iptables mangle 计数链,
+# 只有 conntrack 层字节计数能看到全量流量(实测游戏流量 20s +92KB 上行/+836KB 下行)
+sysctl -w net.netfilter.nf_conntrack_acct=1 >/dev/null 2>&1
 
 while :; do
 	TOKEN=$(cfg token)
@@ -86,8 +90,24 @@ while :; do
 		iptables -t mangle -C LEIGUARD -s "$1" -j RETURN 2>/dev/null || iptables -t mangle -A LEIGUARD -s "$1" -j RETURN
 	}
 
+	# 流量统计: 优先读 conntrack 字节计数(该设备所有连接双向字节之和),
+	# 不受加速核心 TPROXY 接管影响; conntrack 不可用时回退 iptables 计数链
 	bytes_of() {
-		iptables -t mangle -L LEIGUARD -v -n -x 2>/dev/null | awk -v ip="$1" '$3=="RETURN" && $8==ip {print $2; exit}'
+		local ip="$1"
+		if [ -r /proc/net/nf_conntrack ]; then
+			awk -v ip="$ip" '
+				{
+					line = $0 " "
+					if (index(line, "src=" ip " ") > 0 || index(line, "dst=" ip " ") > 0) {
+						n = split(line, f, " ")
+						for (i = 1; i <= n; i++)
+							if (f[i] ~ /^bytes=/) { sub(/^bytes=/, "", f[i]); s += f[i] }
+					}
+				}
+				END { print s + 0 }' /proc/net/nf_conntrack 2>/dev/null
+			return
+		fi
+		iptables -t mangle -L LEIGUARD -v -n -x 2>/dev/null | awk -v ip="$ip" '$3=="RETURN" && $8==ip {print $2; exit}'
 	}
 
 	now=$(date +%s)
